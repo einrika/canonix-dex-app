@@ -185,9 +185,9 @@ function MarketContent() {
 
 export default function MarketPage() {
   return (
-    <Providers>
+    <>
       <MarketContent />
       <BottomNav />
-    </Providers>
+    </>
   );
 }

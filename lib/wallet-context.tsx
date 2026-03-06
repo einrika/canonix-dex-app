@@ -2,8 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import CryptoJS from 'crypto-js';
-import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
-import { StargateClient, SigningStargateClient } from '@cosmjs/stargate';
+import { DirectSecp256k1HdWallet, Registry } from '@cosmjs/proto-signing';
+import { StargateClient, SigningStargateClient, defaultRegistryTypes } from '@cosmjs/stargate';
 
 interface Wallet {
   id: string;
@@ -38,6 +38,13 @@ interface WalletContextType {
   lock: () => void;
   setNetwork: (networkId: string) => void;
   refreshBalances: () => Promise<void>;
+  switchWallet: (id: string) => void;
+  buildAndSendTx: (messages: any[], memo?: string, metadata?: any) => Promise<any>;
+  executeSwap: (contractAddress: string, offerDenom: string, offerAmount: number, minReceive: number, tokenDecimals: number, symbol: string) => Promise<any>;
+  executeSend: (tokenAddress: string, recipient: string, amount: number, tokenDecimals: number, symbol: string) => Promise<any>;
+  executeBurn: (contractAddress: string, amount: number, tokenDecimals: number, symbol: string) => Promise<any>;
+  executeAddLP: (contractAddress: string, paxiAmount: number, tokenAmount: number, tokenDecimals: number, symbol: string) => Promise<any>;
+  executeRemoveLP: (contractAddress: string, lpAmount: number, symbol: string) => Promise<any>;
 }
 
 const DEFAULT_NETWORKS: Network[] = [
@@ -177,6 +184,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setActiveWallet(null);
   };
 
+  const switchWallet = (id: string) => {
+    const wallet = wallets.find(w => w.id === id);
+    if (wallet) setActiveWallet(wallet);
+  };
+
   const setNetwork = (networkId: string) => {
     const net = DEFAULT_NETWORKS.find(n => n.id === networkId);
     if (net) setActiveNetwork(net);
@@ -196,6 +208,237 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.error('Refresh balances failed', e);
     }
   }, [activeWallet, activeNetwork]);
+
+  const buildAndSendTx = async (messages: any[], memo: string = "", metadata: any = {}) => {
+    if (!activeWallet || isLocked || !pin) {
+      throw new Error("Wallet locked or not connected");
+    }
+
+    try {
+      // Decrypt mnemonic
+      const bytes = CryptoJS.AES.decrypt(activeWallet.encryptedMnemonic, pin);
+      const mnemonic = bytes.toString(CryptoJS.enc.Utf8);
+
+      const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'paxi' });
+
+      const myRegistry = new Registry(defaultRegistryTypes);
+      // Note: In a real app, we would add custom message types here if needed
+
+      const client = await SigningStargateClient.connectWithSigner(activeNetwork.rpc, wallet, {
+        registry: myRegistry
+      });
+
+      const result = await client.signAndBroadcast(activeWallet.address, messages, "auto", memo);
+
+      await refreshBalances();
+      return result;
+    } catch (e) {
+      console.error('Transaction failed', e);
+      throw e;
+    }
+  };
+
+  const executeSwap = async (
+    contractAddress: string,
+    offerDenom: string,
+    offerAmount: number,
+    minReceive: number,
+    tokenDecimals: number,
+    symbol: string
+  ) => {
+    if (!activeWallet) return;
+
+    const microOffer = offerDenom === 'upaxi' ?
+      Math.floor(offerAmount * 1e6).toString() :
+      Math.floor(offerAmount * Math.pow(10, tokenDecimals)).toString();
+
+    const microMinReceive = offerDenom === 'upaxi' ?
+      Math.floor(minReceive * Math.pow(10, tokenDecimals)).toString() :
+      Math.floor(minReceive * 1e6).toString();
+
+    const messages = [];
+
+    // 1. Allowance if offering PRC20
+    if (offerDenom !== 'upaxi') {
+      messages.push({
+        typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+        value: {
+          sender: activeWallet.address,
+          contract: offerDenom,
+          msg: new TextEncoder().encode(JSON.stringify({
+            increase_allowance: {
+              spender: "paxi1v2p59q89nssvsn4t48zstndn6r6znunyxvpx3tky8303jnyhyt7sw9mcyq",
+              amount: microOffer
+            }
+          })),
+          funds: []
+        }
+      });
+    }
+
+    // 2. Swap Message
+    messages.push({
+      typeUrl: "/x.swap.types.MsgSwap",
+      value: {
+        creator: activeWallet.address,
+        prc20: contractAddress,
+        offerDenom: offerDenom,
+        offerAmount: microOffer,
+        minReceive: microMinReceive
+      }
+    });
+
+    return buildAndSendTx(messages, "Swap via Canonix", {
+      type: 'Swap',
+      asset: symbol
+    });
+  };
+
+  const executeSend = async (
+    tokenAddress: string,
+    recipient: string,
+    amount: number,
+    tokenDecimals: number,
+    symbol: string
+  ) => {
+    if (!activeWallet) return;
+
+    const microAmount = Math.floor(amount * Math.pow(10, tokenDecimals)).toString();
+    const messages = [];
+
+    if (tokenAddress === 'upaxi') {
+      messages.push({
+        typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+        value: {
+          fromAddress: activeWallet.address,
+          toAddress: recipient,
+          amount: [{ denom: 'upaxi', amount: microAmount }]
+        }
+      });
+    } else {
+      messages.push({
+        typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+        value: {
+          sender: activeWallet.address,
+          contract: tokenAddress,
+          msg: new TextEncoder().encode(JSON.stringify({
+            transfer: {
+              recipient: recipient,
+              amount: microAmount
+            }
+          })),
+          funds: []
+        }
+      });
+    }
+
+    return buildAndSendTx(messages, "Send via Canonix", {
+      type: 'Send',
+      asset: symbol,
+      address: recipient
+    });
+  };
+
+  const executeBurn = async (
+    contractAddress: string,
+    amount: number,
+    tokenDecimals: number,
+    symbol: string
+  ) => {
+    if (!activeWallet) return;
+
+    const microAmount = Math.floor(amount * Math.pow(10, tokenDecimals)).toString();
+
+    const messages = [{
+      typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+      value: {
+        sender: activeWallet.address,
+        contract: contractAddress,
+        msg: new TextEncoder().encode(JSON.stringify({
+          burn: {
+            amount: microAmount
+          }
+        })),
+        funds: []
+      }
+    }];
+
+    return buildAndSendTx(messages, "Burn Tokens", {
+      type: 'Burn',
+      asset: symbol
+    });
+  };
+
+  const executeAddLP = async (
+    contractAddress: string,
+    paxiAmount: number,
+    tokenAmount: number,
+    tokenDecimals: number,
+    symbol: string
+  ) => {
+    if (!activeWallet) return;
+
+    const microPaxi = Math.floor(paxiAmount * 1e6).toString();
+    const microToken = Math.floor(tokenAmount * Math.pow(10, tokenDecimals)).toString();
+
+    const messages = [];
+
+    // 1. Allowance for Token
+    messages.push({
+      typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+      value: {
+        sender: activeWallet.address,
+        contract: contractAddress,
+        msg: new TextEncoder().encode(JSON.stringify({
+          increase_allowance: {
+            spender: "paxi1v2p59q89nssvsn4t48zstndn6r6znunyxvpx3tky8303jnyhyt7sw9mcyq",
+            amount: microToken
+          }
+        })),
+        funds: []
+      }
+    });
+
+    // 2. Provide Liquidity Msg
+    messages.push({
+      typeUrl: "/x.swap.types.MsgProvideLiquidity",
+      value: {
+        creator: activeWallet.address,
+        prc20: contractAddress,
+        paxiAmount: microPaxi + 'upaxi',
+        prc20Amount: microToken
+      }
+    });
+
+    return buildAndSendTx(messages, "Add Liquidity", {
+      type: 'Add Liquidity',
+      asset: `PAXI / ${symbol}`
+    });
+  };
+
+  const executeRemoveLP = async (
+    contractAddress: string,
+    lpAmount: number,
+    symbol: string
+  ) => {
+    if (!activeWallet) return;
+
+    const microLP = Math.floor(lpAmount * 1e6).toString();
+
+    const messages = [{
+      typeUrl: "/x.swap.types.MsgWithdrawLiquidity",
+      value: {
+        creator: activeWallet.address,
+        prc20: contractAddress,
+        lpAmount: microLP
+      }
+    }];
+
+    return buildAndSendTx(messages, "Remove Liquidity", {
+      type: 'Remove Liquidity',
+      asset: `PAXI / ${symbol}`
+    });
+  };
 
   useEffect(() => {
     const updateBalances = async () => {
@@ -219,7 +462,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       unlock,
       lock,
       setNetwork,
-      refreshBalances
+      refreshBalances,
+      switchWallet,
+      buildAndSendTx,
+      executeSwap,
+      executeSend,
+      executeBurn,
+      executeAddLP,
+      executeRemoveLP
     }}>
       {children}
     </WalletContext.Provider>
