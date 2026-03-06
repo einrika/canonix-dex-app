@@ -228,9 +228,9 @@ function ExplorerContent() {
 
 export default function ExplorerPage() {
   return (
-    <Providers>
+    <>
       <ExplorerContent />
       <BottomNav />
-    </Providers>
+    </>
   );
 }

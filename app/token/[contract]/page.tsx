@@ -17,6 +17,7 @@ import Link from 'next/link';
 import { useState, useMemo, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { GoogleGenAI } from "@google/genai";
+import { SwapTerminal } from '@/components/SwapTerminal';
 
 // Mock chart data
 const generateChartData = (basePrice: number) => {
@@ -33,14 +34,15 @@ function TokenDetailContent() {
   const { activeWallet } = useWallet();
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'chart' | 'swap' | 'stats' | 'info' | 'ai'>('chart');
-  const [swapMode, setSwapMode] = useState<'buy' | 'sell'>('buy');
-  const [amount, setAmount] = useState('');
-  const [slippage, setSlippage] = useState('0.5');
-  const [isConfirming, setIsConfirming] = useState(false);
-  const [isSwapping, setIsSwapping] = useState(false);
-  const [swapSuccess, setSwapSuccess] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const { data: tokensData } = useQuery({
+    queryKey: ['tokens'],
+    queryFn: canonixApi.getTokenList,
+  });
+
+  const tokens = useMemo(() => Array.isArray(tokensData) ? tokensData : [], [tokensData]);
 
   const { data: token, isLoading } = useQuery({
     queryKey: ['token', contract],
@@ -84,17 +86,6 @@ function TokenDetailContent() {
     } finally {
       setIsAnalyzing(false);
     }
-  };
-
-  const handleSwap = async () => {
-    setIsSwapping(true);
-    // Mock swap execution
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setIsSwapping(false);
-    setIsConfirming(false);
-    setSwapSuccess(true);
-    setTimeout(() => setSwapSuccess(false), 3000);
-    setAmount('');
   };
 
   if (isLoading) {
@@ -238,110 +229,10 @@ function TokenDetailContent() {
             exit={{ opacity: 0, y: -10 }}
             className="px-6"
           >
-            <div className="bg-[#0E1118] border border-[#1A2030] rounded-2xl p-5">
-              <div className="flex justify-between items-center mb-6">
-                <div className="flex gap-2 flex-1">
-                  <button 
-                    onClick={() => setSwapMode('buy')}
-                    className={`flex-1 py-3 rounded-xl font-bold text-xs uppercase transition-all ${
-                      swapMode === 'buy' ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.3)]' : 'bg-[#080A0F] text-[#6B7280]'
-                    }`}
-                  >
-                    Buy
-                  </button>
-                  <button 
-                    onClick={() => setSwapMode('sell')}
-                    className={`flex-1 py-3 rounded-xl font-bold text-xs uppercase transition-all ${
-                      swapMode === 'sell' ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.3)]' : 'bg-[#080A0F] text-[#6B7280]'
-                    }`}
-                  >
-                    Sell
-                  </button>
-                </div>
-                <button className="p-3 ml-2 bg-[#080A0F] border border-[#1A2030] rounded-xl text-[#6B7280]">
-                  <Settings size={18} />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div className="bg-[#080A0F] border border-[#1A2030] rounded-xl p-4">
-                  <div className="flex justify-between mb-2">
-                    <span className="text-[10px] font-bold text-[#6B7280]">YOU PAY</span>
-                    <span className="text-[10px] font-bold text-[#6B7280]">BALANCE: 0.00</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <input 
-                      type="number" 
-                      placeholder="0.00"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      className="bg-transparent border-none text-2xl font-mono font-bold focus:outline-none w-full"
-                    />
-                    <div className="flex items-center gap-2 bg-[#1A2030] px-3 py-1.5 rounded-lg">
-                      <div className="w-5 h-5 rounded-full bg-[#00E5CC] flex items-center justify-center text-[8px] font-bold text-[#080A0F]">P</div>
-                      <span className="text-xs font-bold">PXI</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-center -my-2 relative z-10">
-                  <div className="bg-[#0E1118] border border-[#1A2030] p-2 rounded-full">
-                    <TrendingDown size={16} className="text-[#00E5CC]" />
-                  </div>
-                </div>
-
-                <div className="bg-[#080A0F] border border-[#1A2030] rounded-xl p-4">
-                  <div className="flex justify-between mb-2">
-                    <span className="text-[10px] font-bold text-[#6B7280]">YOU RECEIVE</span>
-                    <span className="text-[10px] font-bold text-[#6B7280]">ESTIMATED</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-2xl font-mono font-bold text-[#6B7280]">
-                      {amount ? (parseFloat(amount) / token.price).toFixed(2) : '0.00'}
-                    </p>
-                    <div className="flex items-center gap-2 bg-[#1A2030] px-3 py-1.5 rounded-lg">
-                      <div className={`w-5 h-5 rounded-full ${getTokenColor(token.symbol)} flex items-center justify-center text-[8px] font-bold`}>
-                        {getTokenLetter(token.name)}
-                      </div>
-                      <span className="text-xs font-bold">{token.symbol}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center px-1">
-                  <span className="text-[10px] font-bold text-[#6B7280]">SLIPPAGE TOLERANCE</span>
-                  <div className="flex gap-2">
-                    {['0.5', '1.0', '2.0'].map(s => (
-                      <button 
-                        key={s}
-                        onClick={() => setSlippage(s)}
-                        className={`text-[10px] font-bold px-2 py-1 rounded-md border ${
-                          slippage === s ? 'bg-[#00E5CC]/10 border-[#00E5CC] text-[#00E5CC]' : 'bg-[#080A0F] border-[#1A2030] text-[#6B7280]'
-                        }`}
-                      >
-                        {s}%
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {!activeWallet ? (
-                  <Link href="/settings" className="block w-full">
-                    <button className="w-full bg-[#00E5CC] text-[#080A0F] font-display font-extrabold py-4 rounded-xl shadow-lg uppercase tracking-wider text-sm">
-                      Connect Wallet
-                    </button>
-                  </Link>
-                ) : (
-                  <button 
-                    onClick={() => setIsConfirming(true)}
-                    disabled={!amount || parseFloat(amount) <= 0}
-                    className="w-full bg-[#00E5CC] text-[#080A0F] font-display font-extrabold py-4 rounded-xl shadow-lg uppercase tracking-wider text-sm disabled:opacity-50"
-                  >
-                    Swap Now
-                  </button>
-                )}
-              </div>
-            </div>
+            <SwapTerminal
+              initialToken={token}
+              tokens={tokens}
+            />
           </motion.div>
         )}
 
@@ -585,96 +476,14 @@ function TokenDetailContent() {
         )}
       </AnimatePresence>
 
-      {/* Confirmation Modal */}
-      <AnimatePresence>
-        {isConfirming && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsConfirming(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="relative w-full max-w-sm bg-[#0E1118] border border-[#1A2030] rounded-3xl p-6 shadow-2xl"
-            >
-              <h3 className="text-lg font-display font-extrabold uppercase tracking-widest mb-6 text-center">Confirm Swap</h3>
-              
-              <div className="space-y-4 mb-8">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-[#6B7280] font-bold">PAY</span>
-                  <span className="text-sm font-mono font-bold">{amount} PXI</span>
-                </div>
-                <div className="flex justify-center">
-                  <TrendingDown size={16} className="text-[#00E5CC]" />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-[#6B7280] font-bold">RECEIVE</span>
-                  <span className="text-sm font-mono font-bold">{(parseFloat(amount) / token.price).toFixed(2)} {token.symbol}</span>
-                </div>
-                <div className="border-t border-[#1A2030] pt-4 space-y-2">
-                  <div className="flex justify-between text-[10px] font-bold">
-                    <span className="text-[#6B7280]">SLIPPAGE</span>
-                    <span>{slippage}%</span>
-                  </div>
-                  <div className="flex justify-between text-[10px] font-bold">
-                    <span className="text-[#6B7280]">NETWORK FEE</span>
-                    <span>0.001 PXI</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setIsConfirming(false)}
-                  className="flex-1 py-4 bg-[#080A0F] border border-[#1A2030] rounded-2xl font-bold text-xs uppercase"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleSwap}
-                  disabled={isSwapping}
-                  className="flex-1 py-4 bg-[#00E5CC] text-[#080A0F] rounded-2xl font-bold text-xs uppercase shadow-lg flex items-center justify-center"
-                >
-                  {isSwapping ? <Loader2 size={18} className="animate-spin" /> : 'Confirm'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Success Toast */}
-      <AnimatePresence>
-        {swapSuccess && (
-          <motion.div 
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-24 left-6 right-6 z-[110] bg-green-500 text-[#080A0F] p-4 rounded-2xl shadow-2xl flex items-center gap-3"
-          >
-            <div className="bg-white/20 p-2 rounded-full">
-              <CheckCircle size={20} />
-            </div>
-            <div>
-              <p className="font-bold text-sm">Swap Successful!</p>
-              <p className="text-[10px] font-medium opacity-80">Your transaction has been confirmed on Paxi Network.</p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
 
 export default function TokenDetailPage() {
   return (
-    <Providers>
+    <>
       <TokenDetailContent />
-    </Providers>
+    </>
   );
 }

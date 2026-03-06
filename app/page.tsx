@@ -1,15 +1,18 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { canonixApi, formatPrice, formatChange, getTokenLetter, getTokenColor, type Token } from '@/lib/canonix-api';
 import { BottomNav } from '@/components/BottomNav';
 import { Providers } from '@/components/Providers';
-import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, Layers, Activity, Cpu } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { TrendingUp, TrendingDown, Layers, Search, Zap, Star } from 'lucide-react';
 import Link from 'next/link';
 
 function HomeContent() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeSort, setActiveSort] = useState<'hot' | 'new' | 'gainer' | 'mcap'>('hot');
+
   const { data: tokensData, isLoading } = useQuery({
     queryKey: ['tokens'],
     queryFn: canonixApi.getTokenList,
@@ -17,13 +20,30 @@ function HomeContent() {
 
   const tokens = useMemo(() => Array.isArray(tokensData) ? tokensData : [], [tokensData]);
 
+  const filteredTokens = useMemo(() => {
+    let result = tokens.filter(t =>
+      t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.contract.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    if (activeSort === 'new') {
+      // In real app, sort by creation date
+      return [...result].reverse();
+    } else if (activeSort === 'gainer') {
+      return [...result].sort((a, b) => b.change24h - a.change24h);
+    } else if (activeSort === 'mcap') {
+      return [...result].sort((a, b) => b.marketCap - a.marketCap);
+    }
+    return result;
+  }, [tokens, searchTerm, activeSort]);
+
   const { data: nodeStatus } = useQuery({
     queryKey: ['nodeStatus'],
     queryFn: canonixApi.getNodeStatus,
   });
 
   const hotTokens = tokens.slice(0, 8);
-  const topMarkets = tokens.slice(0, 12);
 
   return (
     <div className="flex-1 pb-32 overflow-y-auto no-scrollbar">
@@ -101,36 +121,67 @@ function HomeContent() {
         </div>
       </section>
 
-      {/* Top Markets */}
+      {/* Market Tabs & Search */}
       <section className="px-6 py-4">
-        <h3 className="font-display font-bold text-sm flex items-center gap-2 mb-4">
-          <Layers size={16} className="text-[#00E5CC]" />
-          TOP MARKETS
-        </h3>
+        <div className="relative mb-6">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280]" size={18} />
+          <input
+            type="text"
+            placeholder="Search by Name or Address..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-[#0E1118] border border-[#1A2030] rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:outline-none focus:border-[#00E5CC]/50 transition-colors placeholder:text-[#6B7280] uppercase"
+          />
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-4 mb-4">
+          {(['hot', 'new', 'gainer', 'mcap'] as const).map((sort) => (
+            <button
+              key={sort}
+              onClick={() => setActiveSort(sort)}
+              className={`px-6 py-2 rounded-xl text-[10px] font-bold uppercase transition-all whitespace-nowrap border ${
+                activeSort === sort
+                ? 'bg-[#00E5CC] text-[#080A0F] border-[#00E5CC] shadow-lg'
+                : 'bg-[#0E1118] text-[#6B7280] border-[#1A2030]'
+              }`}
+            >
+              {sort === 'gainer' ? 'Top Gainers' : sort === 'mcap' ? 'Market Cap' : sort}
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-3">
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
-              <div key={i} className="h-16 bg-[#0E1118] rounded-xl animate-pulse border border-[#1A2030]" />
+              <div key={i} className="h-20 bg-[#0E1118] rounded-2xl animate-pulse border border-[#1A2030]" />
             ))
           ) : (
-            topMarkets.map((token) => (
+            filteredTokens.slice(0, 20).map((token) => (
               <Link key={token.contract} href={`/token/${token.contract}`}>
                 <motion.div 
                   whileTap={{ scale: 0.98 }}
-                  className="bg-[#0E1118] border border-[#1A2030] rounded-xl p-3 flex items-center justify-between"
+                  className="bg-[#0E1118] border border-[#1A2030] rounded-2xl p-4 flex items-center justify-between group hover:border-[#00E5CC]/30 transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl ${getTokenColor(token.symbol)} flex items-center justify-center font-bold text-lg`}>
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl ${getTokenColor(token.symbol)} flex items-center justify-center font-bold text-xl shadow-lg relative`}>
                       {getTokenLetter(token.name)}
+                      {token.is_verified && (
+                        <div className="absolute -top-1 -right-1 bg-[#080A0F] rounded-full p-0.5 border border-[#1A2030]">
+                          <Zap size={10} className="text-[#00E5CC] fill-[#00E5CC]" />
+                        </div>
+                      )}
                     </div>
                     <div>
-                      <p className="font-mono font-bold text-sm leading-none mb-1">{token.symbol}</p>
-                      <p className="text-[10px] text-[#6B7280] font-medium">{token.name}</p>
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="font-mono font-bold text-sm leading-none uppercase">{token.symbol}</p>
+                        {token.is_pump && <span className="text-[8px] px-1 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded font-black italic">PUMP</span>}
+                      </div>
+                      <p className="text-[10px] text-[#6B7280] font-bold uppercase tracking-tighter">{token.name}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="font-mono font-bold text-sm leading-none mb-1">{formatPrice(token.price)}</p>
-                    <div className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${parseFloat(token.change24h.toString()) >= 0 ? 'bg-green-500/10 text-green-400' : 'bg-rose-500/10 text-rose-500'}`}>
+                    <p className="font-mono font-bold text-sm leading-none mb-1.5">{formatPrice(token.price)}</p>
+                    <div className={`inline-block px-2 py-0.5 rounded-lg text-[10px] font-black italic ${parseFloat(token.change24h.toString()) >= 0 ? 'bg-green-500/10 text-green-400' : 'bg-rose-500/10 text-rose-500'}`}>
                       {formatChange(token.change24h)}
                     </div>
                   </div>
@@ -146,9 +197,9 @@ function HomeContent() {
 
 export default function HomePage() {
   return (
-    <Providers>
+    <>
       <HomeContent />
       <BottomNav />
-    </Providers>
+    </>
   );
 }

@@ -34,7 +34,7 @@ const rewards = [
 
 export default function RewardsPage() {
   return (
-    <div className="min-h-screen bg-[#080A0F] text-white pb-32">
+    <div className="flex-1 bg-[#080A0F] text-white pb-32 overflow-y-auto no-scrollbar">
       {/* Header */}
       <header className="px-6 pt-12 pb-8 sticky top-0 bg-[#080A0F]/80 backdrop-blur-md z-10">
         <Link href="/explorer" className="inline-flex items-center gap-2 text-[#00E5CC] font-bold text-xs uppercase tracking-widest mb-6">
